@@ -5,29 +5,32 @@ from fastapi.responses import HTMLResponse
 
 app = FastAPI()
 
-# Configuración robusta de carpetas para la nube
-current_file_path = os.path.abspath(__file__)
-project_root = os.path.dirname(current_file_path)
-templates_path = os.path.join(project_root, "templates")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
-templates = Jinja2Templates(directory=templates_path)
-
-# Almacén de ubicación
-current_location = {"lat": 0, "lng": 0}
+# Estado global del dispositivo
+device_status = {
+    "lat": 0, 
+    "lng": 0, 
+    "alert": False, 
+    "panic": False,
+    "battery": "--"
+}
 
 @app.get("/", response_class=HTMLResponse)
-async def get_map(request: Request):
+async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 @app.post("/update")
 async def update_location(data: dict):
-    global current_location
-    current_location = data
+    global device_status
+    # Actualizamos solo los campos que vengan en el envío
+    device_status.update(data)
     return {"status": "ok"}
 
 @app.get("/location")
 async def get_location():
-    return current_location
+    return device_status
 
 if __name__ == "__main__":
     import uvicorn

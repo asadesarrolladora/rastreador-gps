@@ -1,60 +1,60 @@
-import os
-from fastapi import FastAPI, Request
-from motor.motor_asyncio import AsyncIOMotorClient
-from fastapi.templating import Jinja2Templates
-from datetime import datetime
-import pytz # Para manejar la hora local de México
+// Variable global para el Wake Lock
+let wakeLock = null;
 
-app = FastAPI()
-templates = Jinja2Templates(directory="templates")
-
-MONGO_URL = os.environ.get("MONGO_URL")
-client = AsyncIOMotorClient(MONGO_URL)
-db = client.rastreador_db
-
-# Configuración de zona horaria (CDMX)
-mexico_tz = pytz.timezone('America/Mexico_City')
-
-@app.get("/")
-async def read_root(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
-
-@app.post("/update/{trailer_id}")
-async def update_location(trailer_id: str, data: dict):
-    ahora = datetime.now(mexico_tz)
-    
-    registro = {
-        "trailer_id": trailer_id,
-        "lat": data.get("lat"),
-        "lng": data.get("lng"),
-        "battery": data.get("battery"),
-        "panic": data.get("panic", False),
-        "timestamp": ahora,
-        "hora_lectura": ahora.strftime("%H:%M:%S") 
-    }
-    await db.posiciones.insert_one(registro)
-    return {"status": "ok"}
-
-@app.get("/fleet")
-async def get_fleet():
-    ids_trailers = await db.posiciones.distinct("trailer_id")
-    estado_flota = {}
-    
-    for tid in ids_trailers:
-        cursor = db.posiciones.find({"trailer_id": tid}).sort("timestamp", -1).limit(1)
-        ultimo = await cursor.to_list(length=1)
-        
-        if ultimo:
-            historia_cursor = db.posiciones.find({"trailer_id": tid}).sort("timestamp", -1).limit(50)
-            historia = await historia_cursor.to_list(length=50)
-            camino = [[p["lat"], p["lng"]] for p in reversed(historia)]
+// Función para solicitar que la pantalla NO se apague
+async function activarWakeLock() {
+    try {
+        if ('wakeLock' in navigator) {
+            wakeLock = await navigator.wakeLock.request('screen');
+            console.log("Pantalla bloqueada: No se apagará");
             
-            estado_flota[tid] = {
-                "lat": ultimo[0]["lat"],
-                "lng": ultimo[0]["lng"],
-                "battery": ultimo[0].get("battery", "--"),
-                "panic": ultimo[0].get("panic", False),
-                "last_seen": ultimo[0].get("hora_lectura", "--:--"),
-                "path": camino
-            }
-    return estado_flota
+            // Si el usuario cambia de pestaña y vuelve, reactivarlo
+            wakeLock.addEventListener('release', () => {
+                console.log('Wake Lock liberado');
+            });
+        }
+    } catch (err) {
+        console.error(`Error con Wake Lock: ${err.name}, ${err.message}`);
+    }
+}
+
+function iniciarRastreo() {
+    if (isMonitor) return;
+
+    // Activamos el Wake Lock al iniciar
+    activarWakeLock();
+
+    navigator.geolocation.watchPosition(pos => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+
+        if (!centradoInicial) {
+            map.setView([lat, lng], 17);
+            centradoInicial = true;
+        }
+
+        // Enviamos los datos al servidor
+        fetch('/update/' + trailerId, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ 
+                lat: lat, 
+                lng: lng, 
+                battery: "Activo" 
+            })
+        });
+    }, err => {
+        console.error("Error de GPS:", err);
+    }, { 
+        enableHighAccuracy: true,
+        timeout: 5000,
+        maximumAge: 0 
+    });
+}
+
+// Escuchar cuando la página vuelve a estar visible para reactivar el bloqueo
+document.addEventListener('visibilitychange', async () => {
+    if (wakeLock !== null && document.visibilityState === 'visible') {
+        activarWakeLock();
+    }
+});

@@ -5,80 +5,43 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; font-family: sans-serif; background: #121212; color: white; }
-        #map { height: 70vh; width: 100%; }
-        .panel { padding: 15px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        .btn-panic { background: #e74c3c; color: white; padding: 15px; border-radius: 10px; border: none; font-weight: bold; grid-column: span 2; }
+        body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #1a1a1a; color: white; }
+        #map { height: 60vh; width: 100%; border-bottom: 2px solid #333; }
+        
+        /* Estilos de la Tabla */
+        .table-container { padding: 20px; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; background: #252525; border-radius: 8px; overflow: hidden; }
+        th { background: #333; padding: 12px; text-align: left; color: #aaa; font-size: 14px; }
+        td { padding: 12px; border-bottom: 1px solid #333; font-size: 14px; }
+        
+        /* Estados */
+        .status-pill { padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; }
+        .status-normal { background: #2ecc71; color: #fff; }
+        .status-panic { background: #e74c3c; color: #fff; animation: blink 1s infinite; }
+        
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
     </style>
 </head>
 <body>
     <div id="map"></div>
-    <div class="panel">
-        <div id="info">Esperando señal...</div>
-        <button class="btn-panic" onclick="enviarPanico()">🚨 BOTÓN DE PÁNICO</button>
+    
+    <div class="table-container">
+        <h3>📊 Resumen de Unidades</h3>
+        <table id="fleet-table">
+            <thead>
+                <tr>
+                    <th>Unidad ID</th>
+                    <th>Estado</th>
+                    <th>🔋 Batería</th>
+                    <th>Coordenadas</th>
+                </tr>
+            </thead>
+            <tbody id="table-body">
+                </tbody>
+        </table>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // Identificar qué trailer es este desde la URL (ej: ?id=Trailer01)
-        const urlParams = new URLSearchParams(window.location.search);
-        const trailerId = urlParams.get('id') || "Invitado";
-
-        var map = L.map('map').setView([0, 0], 2);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-
-        var marcadores = {};
-        var rutas = {};
-
-        // 1. Función para que el CHOFER envíe su ubicación
-        function iniciarRastreo() {
-            navigator.geolocation.watchPosition(pos => {
-                fetch('/update/' + trailerId, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        lat: pos.coords.latitude,
-                        lng: pos.coords.longitude,
-                        battery: "Buscando..." // Opcional: añadir API de batería aquí
-                    })
-                });
-            }, null, { enableHighAccuracy: true });
-        }
-
-        async function enviarPanico() {
-            await fetch('/update/' + trailerId, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ panic: true })
-            });
-            alert("¡ALERTA DE PÁNICO ENVIADA!");
-        }
-
-        // 2. Función para que la CENTRAL vea a todos
-        async function refrescarMapa() {
-            const res = await fetch('/fleet');
-            const flota = await res.json();
-            
-            for (let tid in flota) {
-                const data = flota[tid];
-                const pos = [data.lat, data.lng];
-
-                if (!marcadores[tid]) {
-                    marcadores[tid] = L.marker(pos).addTo(map).bindPopup("Unidad: " + tid);
-                    rutas[tid] = L.polyline([], {color: '#3498db'}).addTo(map);
-                }
-                
-                marcadores[tid].setLatLng(pos);
-                rutas[tid].setLatLngs(data.path);
-                
-                if(data.panic) {
-                    marcadores[tid].bindTooltip("⚠️ EMERGENCIA").openTooltip();
-                }
-            }
-        }
-
-        setInterval(refrescarMapa, 5000);
-        iniciarRastreo();
-    </script>
-</body>
-</html>
+        var map = L.map('map').setView([19.28, -99.47], 13); // Centrado en tu zona (Lerma)
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').

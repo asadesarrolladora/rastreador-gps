@@ -1,47 +1,58 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Monitor de Flota ASA</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <style>
-        body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #1a1a1a; color: white; }
-        #map { height: 60vh; width: 100%; border-bottom: 2px solid #333; }
-        
-        /* Estilos de la Tabla */
-        .table-container { padding: 20px; overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; background: #252525; border-radius: 8px; overflow: hidden; }
-        th { background: #333; padding: 12px; text-align: left; color: #aaa; font-size: 14px; }
-        td { padding: 12px; border-bottom: 1px solid #333; font-size: 14px; }
-        
-        /* Estados */
-        .status-pill { padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; }
-        .status-normal { background: #2ecc71; color: #fff; }
-        .status-panic { background: #e74c3c; color: #fff; animation: blink 1s infinite; }
-        
-        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
-    </style>
-</head>
-<body>
-    <div id="map"></div>
-    
-    <div class="table-container">
-        <h3>📊 Resumen de Unidades</h3>
-        <table id="fleet-table">
-            <thead>
-                <tr>
-                    <th>Unidad ID</th>
-                    <th>Estado</th>
-                    <th>🔋 Batería</th>
-                    <th>Coordenadas</th>
-                </tr>
-            </thead>
-            <tbody id="table-body">
-                </tbody>
-        </table>
-    </div>
+<th>Unidad ID</th>
+        <th>Estado</th>
+        <th>🔋 Batería</th>
+        <th>🕒 Última Conexión</th> <script>
+    // Variable para saber si es la primera vez que recibimos señal
+    let primeraCarga = true;
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script>
-        var map = L.map('map').setView([19.28, -99.47], 13); // Centrado en tu zona (Lerma)
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').
+    function iniciarRastreo() {
+        navigator.geolocation.watchPosition(pos => {
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+
+            // EFECTO POSICIÓN REAL: Si es el chofer, centrar el mapa en él
+            if (primeraCarga) {
+                map.setView([lat, lng], 16); // Zoom cercano a su posición
+                primeraCarga = false;
+            }
+
+            fetch('/update/' + trailerId, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    lat: lat,
+                    lng: lng,
+                    battery: batteryLevel // Asegúrate de tener la variable de batería
+                })
+            });
+        }, null, { enableHighAccuracy: true });
+    }
+
+    async function refrescarSistema() {
+        const res = await fetch('/fleet');
+        const flota = await res.json();
+        const tableBody = document.getElementById('table-body');
+        tableBody.innerHTML = ""; 
+
+        for (let tid in flota) {
+            const data = flota[tid];
+            // ... (lógica de marcadores igual a la anterior) ...
+
+            // ACTUALIZAR TABLA CON HORA
+            const row = `
+                <tr>
+                    <td><b>${tid}</b></td>
+                    <td>
+                        <span class="status-pill ${data.panic ? 'status-panic' : 'status-normal'}">
+                            ${data.panic ? '🚨 PÁNICO' : '✅ OK'}
+                        </span>
+                    </td>
+                    <td>${data.battery}</td>
+                    <td style="color: #3498db; font-weight: bold;">${data.last_seen}</td>
+                </tr>
+            `;
+            tableBody.innerHTML += row;
+        }
+    }
+    // ... resto del script
+</script>

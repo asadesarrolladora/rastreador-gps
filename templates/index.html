@@ -1,101 +1,84 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Rastreador de Seguridad Pro</title>
+    <title>Monitor de Flota ASA</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1a1a1a; color: white; }
-        #map { height: 60vh; width: 100%; border-bottom: 2px solid #333; }
-        .ui-container { padding: 20px; display: flex; flex-direction: column; gap: 15px; }
-        .status-bar { display: flex; justify-content: space-between; background: #333; padding: 10px 20px; border-radius: 10px; }
-        .btn-group { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        button { padding: 20px; border: none; border-radius: 12px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
-        button:active { transform: scale(0.95); }
-        .btn-alert { background: #f39c12; color: white; }
-        .btn-panic { background: #e74c3c; color: white; box-shadow: 0 0 15px rgba(231, 76, 60, 0.4); }
-        .panic-active { animation: emergency-bg 0.5s infinite; }
-        @keyframes emergency-bg { 0% { background: #1a1a1a; } 50% { background: #c0392b; } 100% { background: #1a1a1a; } }
+        body { margin: 0; font-family: sans-serif; background: #121212; color: white; }
+        #map { height: 70vh; width: 100%; }
+        .panel { padding: 15px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .btn-panic { background: #e74c3c; color: white; padding: 15px; border-radius: 10px; border: none; font-weight: bold; grid-column: span 2; }
     </style>
 </head>
-<body id="main-body">
+<body>
     <div id="map"></div>
-    
-    <div class="ui-container">
-        <div class="status-bar">
-            <span>🔋 Batería: <b id="bat-val">--</b></span>
-            <span id="alert-status">✅ Estado Normal</span>
-        </div>
-
-        <div class="btn-group">
-            <button class="btn-alert" onclick="triggerEvent('alert')">⚠️ ALERTA</button>
-            <button class="btn-panic" onclick="triggerEvent('panic')">🚨 PÁNICO</button>
-        </div>
+    <div class="panel">
+        <div id="info">Esperando señal...</div>
+        <button class="btn-panic" onclick="enviarPanico()">🚨 BOTÓN DE PÁNICO</button>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
+        // Identificar qué trailer es este desde la URL (ej: ?id=Trailer01)
+        const urlParams = new URLSearchParams(window.location.search);
+        const trailerId = urlParams.get('id') || "Invitado";
+
         var map = L.map('map').setView([0, 0], 2);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-        
-        var marker = L.marker([0, 0]).addTo(map);
-        // Estela del viaje (Línea roja)
-        var path = L.polyline([], {color: '#e74c3c', weight: 4, opacity: 0.7}).addTo(map);
 
-        let batteryInfo = "--";
-        if (navigator.getBattery) {
-            navigator.getBattery().then(bat => {
-                batteryInfo = Math.round(bat.level * 100) + "%";
-            });
-        }
+        var marcadores = {};
+        var rutas = {};
 
-        async function triggerEvent(type) {
-            const payload = type === 'alert' ? {alert: true} : {panic: true};
-            await fetch('/update', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(payload)
-            });
-            alert("Sinal de " + type.toUpperCase() + " enviado!");
-        }
-
-        function startGPS() {
+        // 1. Función para que el CHOFER envíe su ubicación
+        function iniciarRastreo() {
             navigator.geolocation.watchPosition(pos => {
-                fetch('/update', {
+                fetch('/update/' + trailerId, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
-                        lat: pos.coords.latitude, 
+                        lat: pos.coords.latitude,
                         lng: pos.coords.longitude,
-                        battery: batteryInfo
+                        battery: "Buscando..." // Opcional: añadir API de batería aquí
                     })
                 });
             }, null, { enableHighAccuracy: true });
         }
 
-        // Actualización visual cada 3 segundos
-        setInterval(async () => {
-            const res = await fetch('/location');
-            const data = await res.json();
+        async function enviarPanico() {
+            await fetch('/update/' + trailerId, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ panic: true })
+            });
+            alert("¡ALERTA DE PÁNICO ENVIADA!");
+        }
+
+        // 2. Función para que la CENTRAL vea a todos
+        async function refrescarMapa() {
+            const res = await fetch('/fleet');
+            const flota = await res.json();
             
-            if(data.lat !== 0) {
+            for (let tid in flota) {
+                const data = flota[tid];
                 const pos = [data.lat, data.lng];
-                marker.setLatLng(pos);
-                path.addLatLng(pos); // Dibuja la estela
-                map.panTo(pos);
+
+                if (!marcadores[tid]) {
+                    marcadores[tid] = L.marker(pos).addTo(map).bindPopup("Unidad: " + tid);
+                    rutas[tid] = L.polyline([], {color: '#3498db'}).addTo(map);
+                }
                 
-                document.getElementById('bat-val').innerText = data.battery;
+                marcadores[tid].setLatLng(pos);
+                rutas[tid].setLatLngs(data.path);
                 
                 if(data.panic) {
-                    document.getElementById('main-body').classList.add('panic-active');
-                    document.getElementById('alert-status').innerText = "🚨 EMERGENCIA ACTIVA";
-                } else if(data.alert) {
-                    document.getElementById('alert-status').innerText = "⚠️ PRECAUCIÓN";
+                    marcadores[tid].bindTooltip("⚠️ EMERGENCIA").openTooltip();
                 }
             }
-        }, 3000);
+        }
 
-        startGPS();
+        setInterval(refrescarMapa, 5000);
+        iniciarRastreo();
     </script>
 </body>
 </html>

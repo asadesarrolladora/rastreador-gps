@@ -1,106 +1,142 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
-    <title>Monitor de Flota ASA</title>
+    <meta charset="UTF-8">
+    <title>Sistema de Flota ASA</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #121212; color: white; }
-        #map { height: 60vh; width: 100%; border-bottom: 2px solid #333; }
-        .table-container { padding: 20px; overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; background: #1e1e1e; border-radius: 8px; }
-        th { background: #2c3e50; padding: 12px; text-align: left; font-size: 13px; text-transform: uppercase; }
+        #map { height: 55vh; width: 100%; border-bottom: 2px solid #333; }
+        .container { padding: 15px; }
+        
+        /* Tabla Pro */
+        table { width: 100%; border-collapse: collapse; background: #1e1e1e; border-radius: 8px; margin-top: 10px; }
+        th { background: #2c3e50; padding: 12px; text-align: left; font-size: 12px; }
         td { padding: 12px; border-bottom: 1px solid #333; font-size: 14px; }
+        
+        /* Botón de Pánico Dual */
+        .btn-panic { width: 100%; padding: 20px; font-size: 1.2em; border-radius: 12px; border: none; font-weight: bold; cursor: pointer; transition: 0.3s; }
+        .btn-off { background: #e74c3c; color: white; box-shadow: 0 4px #c0392b; }
+        .btn-on { background: #2c3e50; color: #e74c3c; border: 3px solid #e74c3c; animation: pulse 1.5s infinite; }
+        
         .status-pill { padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 11px; }
-        .status-normal { background: #27ae60; }
-        .status-panic { background: #c0392b; animation: blink 1s infinite; }
-        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+        .st-ok { background: #27ae60; }
+        .st-panic { background: #e74c3c; }
+
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7); } 70% { box-shadow: 0 0 0 15px rgba(231, 76, 60, 0); } 100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0); } }
     </style>
 </head>
 <body>
-    <div id="map"></div>
-    <div class="table-container">
-        <h3>📊 Panel de Control en Tiempo Real</h3>
-        <table id="fleet-table">
+
+<div id="map"></div>
+
+<div class="container">
+    <div id="area-chofer" style="display:none;">
+        <button id="panic-btn" class="btn-panic btn-off" onclick="togglePanic()">🚨 ACTIVAR PÁNICO</button>
+        <p style="text-align:center; color: #888;">Mantén esta ventana abierta durante tu ruta.</p>
+    </div>
+
+    <div id="area-monitor">
+        <h3>📊 Estado de la Flota</h3>
+        <table>
             <thead>
                 <tr>
                     <th>Unidad</th>
                     <th>Estado</th>
-                    <th>🔋 Bat</th>
                     <th>🕒 Última Conexión</th>
-                    <th>📍 Ubicación</th>
                 </tr>
             </thead>
             <tbody id="table-body"></tbody>
         </table>
     </div>
+</div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script>
-        const urlParams = new URLSearchParams(window.location.search);
-        const trailerId = urlParams.get('id') || "Monitor_Central";
-        const isMonitor = !urlParams.has('id');
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    const urlParams = new URLSearchParams(window.location.search);
+    const trailerId = urlParams.get('id');
+    const isChofer = !!trailerId;
 
-        var map = L.map('map').setView([19.4326, -99.1332], 10);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+    var map = L.map('map').setView([19.43, -99.13], 10);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-        var marcadores = {};
-        var rutas = {};
-        let centradoInicial = false;
+    if (isChofer) {
+        document.getElementById('area-chofer').style.display = 'block';
+        document.getElementById('area-monitor').style.display = 'none';
+    }
 
-        function iniciarRastreo() {
-            if (isMonitor) return; // El monitor no envía ubicación
+    var markers = {};
+    var paths = {};
+    var panicActive = false;
+    let wakeLock = null;
 
-            navigator.geolocation.watchPosition(pos => {
-                const lat = pos.coords.latitude;
-                const lng = pos.coords.longitude;
+    // --- LÓGICA WAKE LOCK (Pantalla Encendida) ---
+    async function activarWakeLock() {
+        try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (err) {}
+    }
 
-                // AUTO-CENTRADO PARA EL CHOFER
-                if (!centradoInicial) {
-                    map.setView([lat, lng], 17);
-                    centradoInicial = true;
-                }
+    // --- LÓGICA CHOFER ---
+    function togglePanic() {
+        panicActive = !panicActive;
+        const btn = document.getElementById('panic-btn');
+        btn.innerHTML = panicActive ? "⚠️ ALERTA ACTIVA (Presiona para resolver)" : "🚨 ACTIVAR PÁNICO";
+        btn.className = panicActive ? "btn-panic btn-on" : "btn-panic btn-off";
+        // Enviar actualización inmediata
+        navigator.geolocation.getCurrentPosition(p => enviarUbicacion(p));
+    }
 
-                fetch('/update/' + trailerId, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ lat, lng, battery: "OK" })
-                });
-            }, null, { enableHighAccuracy: true });
-        }
+    function enviarUbicacion(pos) {
+        fetch('/update/' + trailerId, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                lat: pos.coords.latitude,
+                lng: pos.coords.longitude,
+                panic: panicActive,
+                battery: "OK"
+            })
+        });
+    }
 
-        async function refrescarSistema() {
-            const res = await fetch('/fleet');
-            const flota = await res.json();
-            const tableBody = document.getElementById('table-body');
-            tableBody.innerHTML = "";
+    if (isChofer) {
+        activarWakeLock();
+        navigator.geolocation.watchPosition(pos => {
+            map.setView([pos.coords.latitude, pos.coords.longitude], 16);
+            enviarUbicacion(pos);
+        }, null, { enableHighAccuracy: true });
+    }
 
-            for (let tid in flota) {
-                const data = flota[tid];
-                const pos = [data.lat, data.lng];
+    // --- LÓGICA MONITOR ---
+    async function actualizarMonitor() {
+        const res = await fetch('/fleet');
+        const fleet = await res.json();
+        const tbody = document.getElementById('table-body');
+        tbody.innerHTML = "";
 
-                if (!marcadores[tid]) {
-                    marcadores[tid] = L.marker(pos).addTo(map).bindPopup("Unidad: " + tid);
-                    rutas[tid] = L.polyline([], {color: '#3498db', weight: 4}).addTo(map);
-                }
-                marcadores[tid].setLatLng(pos);
-                rutas[tid].setLatLngs(data.path);
+        for (let id in fleet) {
+            const data = fleet[id];
+            const pos = [data.lat, data.lng];
 
-                tableBody.innerHTML += `
-                    <tr>
-                        <td><b>${tid}</b></td>
-                        <td><span class="status-pill ${data.panic ? 'status-panic' : 'status-normal'}">${data.panic ? 'PÁNICO' : 'ONLINE'}</span></td>
-                        <td>${data.battery}</td>
-                        <td style="color: #3498db; font-weight: bold;">${data.last_seen}</td>
-                        <td><small>${data.lat.toFixed(4)}, ${data.lng.toFixed(4)}</small></td>
-                    </tr>`;
-                
-                if(data.panic) marcadores[tid].openPopup();
+            if (!markers[id]) {
+                markers[id] = L.marker(pos).addTo(map).bindPopup(id);
+                paths[id] = L.polyline([], {color: '#3498db'}).addTo(map);
             }
-        }
+            markers[id].setLatLng(pos);
+            paths[id].setLatLngs(data.path);
 
-        setInterval(refrescarSistema, 4000);
-        iniciarRastreo();
-    </script>
+            tbody.innerHTML += `
+                <tr>
+                    <td><b>${id}</b></td>
+                    <td><span class="status-pill ${data.panic ? 'st-panic' : 'st-ok'}">${data.panic ? 'PÁNICO' : 'OK'}</span></td>
+                    <td>${data.last_seen}</td>
+                </tr>`;
+            
+            if(data.panic) markers[id].openPopup();
+        }
+    }
+
+    setInterval(actualizarMonitor, 4000);
+</script>
 </body>
 </html>

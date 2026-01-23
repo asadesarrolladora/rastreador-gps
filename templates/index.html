@@ -1,58 +1,106 @@
-<th>Unidad ID</th>
-        <th>Estado</th>
-        <th>🔋 Batería</th>
-        <th>🕒 Última Conexión</th> <script>
-    // Variable para saber si es la primera vez que recibimos señal
-    let primeraCarga = true;
-
-    function iniciarRastreo() {
-        navigator.geolocation.watchPosition(pos => {
-            const lat = pos.coords.latitude;
-            const lng = pos.coords.longitude;
-
-            // EFECTO POSICIÓN REAL: Si es el chofer, centrar el mapa en él
-            if (primeraCarga) {
-                map.setView([lat, lng], 16); // Zoom cercano a su posición
-                primeraCarga = false;
-            }
-
-            fetch('/update/' + trailerId, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    lat: lat,
-                    lng: lng,
-                    battery: batteryLevel // Asegúrate de tener la variable de batería
-                })
-            });
-        }, null, { enableHighAccuracy: true });
-    }
-
-    async function refrescarSistema() {
-        const res = await fetch('/fleet');
-        const flota = await res.json();
-        const tableBody = document.getElementById('table-body');
-        tableBody.innerHTML = ""; 
-
-        for (let tid in flota) {
-            const data = flota[tid];
-            // ... (lógica de marcadores igual a la anterior) ...
-
-            // ACTUALIZAR TABLA CON HORA
-            const row = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Monitor de Flota ASA</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #121212; color: white; }
+        #map { height: 60vh; width: 100%; border-bottom: 2px solid #333; }
+        .table-container { padding: 20px; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; background: #1e1e1e; border-radius: 8px; }
+        th { background: #2c3e50; padding: 12px; text-align: left; font-size: 13px; text-transform: uppercase; }
+        td { padding: 12px; border-bottom: 1px solid #333; font-size: 14px; }
+        .status-pill { padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 11px; }
+        .status-normal { background: #27ae60; }
+        .status-panic { background: #c0392b; animation: blink 1s infinite; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="table-container">
+        <h3>📊 Panel de Control en Tiempo Real</h3>
+        <table id="fleet-table">
+            <thead>
                 <tr>
-                    <td><b>${tid}</b></td>
-                    <td>
-                        <span class="status-pill ${data.panic ? 'status-panic' : 'status-normal'}">
-                            ${data.panic ? '🚨 PÁNICO' : '✅ OK'}
-                        </span>
-                    </td>
-                    <td>${data.battery}</td>
-                    <td style="color: #3498db; font-weight: bold;">${data.last_seen}</td>
+                    <th>Unidad</th>
+                    <th>Estado</th>
+                    <th>🔋 Bat</th>
+                    <th>🕒 Última Conexión</th>
+                    <th>📍 Ubicación</th>
                 </tr>
-            `;
-            tableBody.innerHTML += row;
+            </thead>
+            <tbody id="table-body"></tbody>
+        </table>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const trailerId = urlParams.get('id') || "Monitor_Central";
+        const isMonitor = !urlParams.has('id');
+
+        var map = L.map('map').setView([19.4326, -99.1332], 10);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+        var marcadores = {};
+        var rutas = {};
+        let centradoInicial = false;
+
+        function iniciarRastreo() {
+            if (isMonitor) return; // El monitor no envía ubicación
+
+            navigator.geolocation.watchPosition(pos => {
+                const lat = pos.coords.latitude;
+                const lng = pos.coords.longitude;
+
+                // AUTO-CENTRADO PARA EL CHOFER
+                if (!centradoInicial) {
+                    map.setView([lat, lng], 17);
+                    centradoInicial = true;
+                }
+
+                fetch('/update/' + trailerId, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ lat, lng, battery: "OK" })
+                });
+            }, null, { enableHighAccuracy: true });
         }
-    }
-    // ... resto del script
-</script>
+
+        async function refrescarSistema() {
+            const res = await fetch('/fleet');
+            const flota = await res.json();
+            const tableBody = document.getElementById('table-body');
+            tableBody.innerHTML = "";
+
+            for (let tid in flota) {
+                const data = flota[tid];
+                const pos = [data.lat, data.lng];
+
+                if (!marcadores[tid]) {
+                    marcadores[tid] = L.marker(pos).addTo(map).bindPopup("Unidad: " + tid);
+                    rutas[tid] = L.polyline([], {color: '#3498db', weight: 4}).addTo(map);
+                }
+                marcadores[tid].setLatLng(pos);
+                rutas[tid].setLatLngs(data.path);
+
+                tableBody.innerHTML += `
+                    <tr>
+                        <td><b>${tid}</b></td>
+                        <td><span class="status-pill ${data.panic ? 'status-panic' : 'status-normal'}">${data.panic ? 'PÁNICO' : 'ONLINE'}</span></td>
+                        <td>${data.battery}</td>
+                        <td style="color: #3498db; font-weight: bold;">${data.last_seen}</td>
+                        <td><small>${data.lat.toFixed(4)}, ${data.lng.toFixed(4)}</small></td>
+                    </tr>`;
+                
+                if(data.panic) marcadores[tid].openPopup();
+            }
+        }
+
+        setInterval(refrescarSistema, 4000);
+        iniciarRastreo();
+    </script>
+</body>
+</html>

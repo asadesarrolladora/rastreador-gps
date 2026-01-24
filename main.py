@@ -24,7 +24,6 @@ async def update_location(trailer_id: str, data: dict):
     ahora = datetime.now(mexico_tz)
     nuevo_estado_panico = data.get("panic", False)
     
-    # 1. Verificar cambio de estado para el historial
     ultimo_registro = await db.posiciones.find_one(
         {"trailer_id": trailer_id}, sort=[("timestamp", -1)]
     )
@@ -40,7 +39,6 @@ async def update_location(trailer_id: str, data: dict):
             "coords": f"{data.get('lat')}, {data.get('lng')}"
         })
 
-    # 2. Guardar posición actual
     registro = {
         "trailer_id": trailer_id,
         "lat": data.get("lat"),
@@ -79,8 +77,12 @@ async def get_fleet():
 async def descargar_reporte():
     cursor = db.historial_alertas.find().sort("timestamp", -1)
     eventos = await cursor.to_list(length=2000)
+    
     csv_content = "Fecha,Hora,Unidad,Evento,Coordenadas\n"
     for e in eventos:
         csv_content += f"{e.get('fecha')},{e.get('hora')},{e.get('trailer_id')},{e.get('evento')},{e.get('coords')}\n"
     
     return PlainTextResponse(
+        content=csv_content,
+        headers={"Content-Disposition": "attachment; filename=reporte_alertas_ASA.csv"}
+    )

@@ -6,23 +6,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #121212; color: white; }
-        #map { height: 55vh; width: 100%; border-bottom: 2px solid #333; }
-        .container { padding: 15px; }
+        body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #121212; color: #e0e0e0; }
+        #map { height: 50vh; width: 100%; border-bottom: 3px solid #333; }
+        .container { padding: 15px; max-width: 1000px; margin: auto; }
         
-        /* Tabla Pro */
-        table { width: 100%; border-collapse: collapse; background: #1e1e1e; border-radius: 8px; margin-top: 10px; }
-        th { background: #2c3e50; padding: 12px; text-align: left; font-size: 12px; }
-        td { padding: 12px; border-bottom: 1px solid #333; font-size: 14px; }
-        
-        /* Botón de Pánico Dual */
-        .btn-panic { width: 100%; padding: 20px; font-size: 1.2em; border-radius: 12px; border: none; font-weight: bold; cursor: pointer; transition: 0.3s; }
-        .btn-off { background: #e74c3c; color: white; box-shadow: 0 4px #c0392b; }
-        .btn-on { background: #2c3e50; color: #e74c3c; border: 3px solid #e74c3c; animation: pulse 1.5s infinite; }
-        
-        .status-pill { padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 11px; }
-        .st-ok { background: #27ae60; }
-        .st-panic { background: #e74c3c; }
+        /* Tabla y Header */
+        .header-flex { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        table { width: 100%; border-collapse: collapse; background: #1e1e1e; border-radius: 10px; overflow: hidden; }
+        th { background: #2c3e50; padding: 12px; text-align: left; color: #bdc3c7; font-size: 12px; }
+        td { padding: 12px; border-bottom: 1px solid #333; }
+
+        /* Botones */
+        .btn-panic { width: 100%; padding: 25px; font-size: 1.3em; border-radius: 15px; border: none; font-weight: bold; cursor: pointer; transition: 0.3s; margin-top: 10px; }
+        .btn-off { background: #e74c3c; color: white; box-shadow: 0 5px #c0392b; }
+        .btn-on { background: #2c3e50; color: #e74c3c; border: 4px solid #e74c3c; animation: pulse 1.5s infinite; }
+        .btn-download { background: #2980b9; color: white; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+
+        .status-pill { padding: 5px 10px; border-radius: 5px; font-weight: bold; font-size: 11px; }
+        .st-ok { background: #27ae60; color: white; }
+        .st-panic { background: #e74c3c; color: white; }
 
         @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7); } 70% { box-shadow: 0 0 0 15px rgba(231, 76, 60, 0); } 100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0); } }
     </style>
@@ -32,19 +34,22 @@
 <div id="map"></div>
 
 <div class="container">
-    <div id="area-chofer" style="display:none;">
+    <div id="area-chofer" style="display:none; text-align: center;">
         <button id="panic-btn" class="btn-panic btn-off" onclick="togglePanic()">🚨 ACTIVAR PÁNICO</button>
-        <p style="text-align:center; color: #888;">Mantén esta ventana abierta durante tu ruta.</p>
+        <p style="margin-top: 15px; color: #aaa;">Ubicación en vivo activa. No cierres esta pestaña.</p>
     </div>
 
     <div id="area-monitor">
-        <h3>📊 Estado de la Flota</h3>
+        <div class="header-flex">
+            <h3>📊 Monitor de Unidades</h3>
+            <button class="btn-download" onclick="location.href='/descargar_reporte'">📥 Descargar Excel</button>
+        </div>
         <table>
             <thead>
                 <tr>
                     <th>Unidad</th>
                     <th>Estado</th>
-                    <th>🕒 Última Conexión</th>
+                    <th>🕒 Última Señal</th>
                 </tr>
             </thead>
             <tbody id="table-body"></tbody>
@@ -58,57 +63,46 @@
     const trailerId = urlParams.get('id');
     const isChofer = !!trailerId;
 
-    var map = L.map('map').setView([19.43, -99.13], 10);
+    var map = L.map('map').setView([19.43, -99.13], 11);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-
-    if (isChofer) {
-        document.getElementById('area-chofer').style.display = 'block';
-        document.getElementById('area-monitor').style.display = 'none';
-    }
 
     var markers = {};
     var paths = {};
     var panicActive = false;
     let wakeLock = null;
 
-    // --- LÓGICA WAKE LOCK (Pantalla Encendida) ---
-    async function activarWakeLock() {
-        try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (err) {}
-    }
-
-    // --- LÓGICA CHOFER ---
-    function togglePanic() {
-        panicActive = !panicActive;
-        const btn = document.getElementById('panic-btn');
-        btn.innerHTML = panicActive ? "⚠️ ALERTA ACTIVA (Presiona para resolver)" : "🚨 ACTIVAR PÁNICO";
-        btn.className = panicActive ? "btn-panic btn-on" : "btn-panic btn-off";
-        // Enviar actualización inmediata
-        navigator.geolocation.getCurrentPosition(p => enviarUbicacion(p));
-    }
-
-    function enviarUbicacion(pos) {
-        fetch('/update/' + trailerId, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                lat: pos.coords.latitude,
-                lng: pos.coords.longitude,
-                panic: panicActive,
-                battery: "OK"
-            })
-        });
-    }
-
     if (isChofer) {
+        document.getElementById('area-chofer').style.display = 'block';
+        document.getElementById('area-monitor').style.display = 'none';
+        
+        // Wake Lock para evitar que la pantalla se apague
+        async function activarWakeLock() {
+            try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+        }
         activarWakeLock();
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') activarWakeLock(); });
+
         navigator.geolocation.watchPosition(pos => {
-            map.setView([pos.coords.latitude, pos.coords.longitude], 16);
-            enviarUbicacion(pos);
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            map.setView([lat, lng], 16);
+            
+            fetch('/update/' + trailerId, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ lat, lng, panic: panicActive, battery: "OK" })
+            });
         }, null, { enableHighAccuracy: true });
     }
 
-    // --- LÓGICA MONITOR ---
-    async function actualizarMonitor() {
+    function togglePanic() {
+        panicActive = !panicActive;
+        const btn = document.getElementById('panic-btn');
+        btn.innerHTML = panicActive ? "⚠️ PÁNICO ACTIVO (Presiona para resolver)" : "🚨 ACTIVAR PÁNICO";
+        btn.className = panicActive ? "btn-panic btn-on" : "btn-panic btn-off";
+    }
+
+    async function updateFleet() {
         const res = await fetch('/fleet');
         const fleet = await res.json();
         const tbody = document.getElementById('table-body');
@@ -120,7 +114,7 @@
 
             if (!markers[id]) {
                 markers[id] = L.marker(pos).addTo(map).bindPopup(id);
-                paths[id] = L.polyline([], {color: '#3498db'}).addTo(map);
+                paths[id] = L.polyline([], {color: '#3498db', weight: 4}).addTo(map);
             }
             markers[id].setLatLng(pos);
             paths[id].setLatLngs(data.path);
@@ -128,15 +122,15 @@
             tbody.innerHTML += `
                 <tr>
                     <td><b>${id}</b></td>
-                    <td><span class="status-pill ${data.panic ? 'st-panic' : 'st-ok'}">${data.panic ? 'PÁNICO' : 'OK'}</span></td>
-                    <td>${data.last_seen}</td>
+                    <td><span class="status-pill ${data.panic ? 'st-panic' : 'st-ok'}">${data.panic ? 'ALERTA' : 'NORMAL'}</span></td>
+                    <td style="color:#3498db; font-weight:bold;">${data.last_seen}</td>
                 </tr>`;
             
             if(data.panic) markers[id].openPopup();
         }
     }
 
-    setInterval(actualizarMonitor, 4000);
+    setInterval(updateFleet, 4000);
 </script>
 </body>
 </html>
